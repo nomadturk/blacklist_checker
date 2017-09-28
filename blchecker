@@ -89,7 +89,7 @@ while true ; do
             esac ;;
         -m|--mailtemplate)
             case "$2" in
-                *) mapfile <$2 ; shift 2 ;;
+                *) mailtemplate=$2 ; shift 2 ;;
             esac ;;
         -n|--name)
             case "$2" in
@@ -112,6 +112,10 @@ while true ; do
 done
 shift "$(($OPTIND - 1))"
 
+mapfile -t mailtemp<$mailtemplate
+#while IFS=$'\n' read -r line; do
+#    mailtemp+=( $line )
+#done <$mailtemplate
 
 #Let's add some color support for a more understandable output.
 red=`tput setaf 1`
@@ -284,7 +288,7 @@ do
 		else		#Epostaya dusen kisim asagisi, mail array ozelligi aciksa
 			if [ "$use_smtp" = 1  ]; then
 				mailarrlenght=$(echo -e  ${mailarr[*]+"${mailarr[*]}"} | grep "IP address" | wc -l);
-				echo -e  "${MAPFILE[@]}" ${mailarr[*]+"${mailarr[*]}"} "\n\n\n\n\n\n" | mailx -s "$i1.0/24 has $mailarrlenght BLACKLIST records" $smtp_ssl_args -S smtp=smtp://$smtp_srv:$smtp_port -S smtp-auth=login -S smtp-auth-user=$smtp_user -S smtp-auth-password=$smtp_password -S from="$smtp_sender_name <$smtp_from>" $EMAIL
+				echo -e  "${mailtemp[@]}" ${mailarr[*]+"${mailarr[*]}"} "\n\n\n\n\n\n" | mailx -s "$i1.0/24 has $mailarrlenght BLACKLIST records" $smtp_ssl_args -S smtp=smtp://$smtp_srv:$smtp_port -S smtp-auth=login -S smtp-auth-user=$smtp_user -S smtp-auth-password=$smtp_password -S from="$smtp_sender_name <$smtp_from>" $EMAIL
 			else
 				echo -e  ${mailarr[*]} | mail -s "$i1.0/24 found BLACKLISTED IP addresses" "$EMAIL"
 			fi
