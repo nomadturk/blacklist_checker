@@ -1,38 +1,159 @@
 #!/bin/bash
-##script requires: 
-##dig 
-##mail server with mail function (if chosen use_smtp="0")
-##mailx (if chosen use_smtp="1")
+#	#script requires:
+#	#dig
+#	#mail server with mail function (if chosen use_smtp="0")
+#	#mailx (if chosen use_smtp="1")
+
+# With set -x you can enable a more verbose output.
+#set -x
+
+# With set - e, the script will exit if any statement returns a non-true return value.
+#set -e
+
+# With set -u the script will halt if there's an unset variable.
+#set -u
+
+# By default bash takes the error status of the last item in a pipeline, which may not be what you want. For example, false | true will be considered to have succeeded. If you would like this to fail, then you can use set -o pipefail to make it fail.
+#set +o pipefail
+
+# Add a help function
+display_help() {
+    echo 'Usage: $0 -o "argument 1" --option="argument" ' >&2
+    echo 'Example: blchecker --list="/root/lists/list25" -s "subnet12" -m "mail.tpl" -n "Blacklist Checker" --email "mail@domain.com, mail2@domain.net"'
+    echo
+    echo "   -l, --list           Which blacklist file to use, default is ,list"
+    echo "   -s, --subnet         Which subnet list to use, default is sub"
+    echo "   -m, --mailtemplate   Set the mail template to be included in the header of your mail"
+    echo "   -n, --name           The name of mail sender. This stands for 'smtp_sender_name'"
+    echo '   -e, --email          You should add a list of email recipients such as "mail@domain.com, mail2@domain.net"'
+    echo "   -h, --help           Displays help, d'uh!"
+    echo "   -d, --debug	  Enable debug mode to display a more verbose output"
+    echo "   WARNING: When using short options, do not pass ="
+    echo
+    echo "20172609, M. Ömer GÖLGELİ"
+    echo "Originally Developed by github.com/bacarrdy"
+    echo "Improved by github.com/nomadturk for Chronos internal usage"
+    echo "   20170926 | Fixed some typos in variable names"
+    echo "   20170926 | Added help menu"
+    echo "   20170926 | Set the script to halt when where are errors or unset variables"
+    echo "   20170926 | Improved prompter support. Now there are more delisting options sent via mail"
+    echo "   20170926 | Added some comments here and there"
+    echo "   20170927 | Replaced greps command with sed commands, otherwise script failed when set -e was provided"
+    echo "   20170927 | Added support for passing arguments via bash. Now if passed, the script can accept lists, subnets etc. from the command line"
+    echo "   20170927 | Added color support for script output"
+    echo "   20170927 | Enabled debug mode"
+    echo "   20170927 | Now the script requires at least 1 argument to be passed to run"
+    echo "   20170928 | Added the ability to show the total count of blacklistsed items"
+    echo "   TODO | Add footer mail template support"
+    echo "   TODO | Read variables from a file"
+    echo "   TODO | Read translations from a file"
+    echo "   TODO | Add support for hostbill database"
+    echo
+    exit 1
+}
+
+#If no argument is passed, display help
+#Set -le 0 to -le -1 to run the script with default values.
+if [  $# -le 0 ]
+        then
+        echo You should pass options to the script.
+        echo
+        display_help
+        exit 1
+fi
+
+
+# read the options
+TEMP=`getopt -o l:s:m:n:e:hd --long list:,subnet:,mailtemplate:,name:,email:,help,debug -n 'blchecher' -- "$@"`
+
+# Default Values
+EMAIL="root@local"
+list=list
+subnet=sub
+mailtemplate=mail.tpl
+smtp_sender_name="IP Blacklist Checker"
+
+eval set -- "$TEMP"
+
+
+# extract options from bash input and their arguments into variables.
+while true ; do
+    case "$1" in
+        -l|--list)
+            case "$2" in
+                *) list=$2 ; shift 2;;
+            esac ;;
+        -s|--subnet) 
+            case "$2" in
+                *) subnet=$2 ; shift 2 ;;
+            esac ;;
+        -m|--mailtemplate)
+            case "$2" in
+                *) mapfile <$2 ; shift 2 ;;
+            esac ;;
+        -n|--name)
+            case "$2" in
+                *) smtp_sender_name=$2 ; shift 2;;
+            esac ;;
+        -e|--email)
+            case "$2" in
+                *) EMAIL=$2 ; shift 2 ;;
+            esac ;;
+        -h|--help) display_help ; shift ;;
+        -d|--debug) set -x ; shift ;;
+        \?) echo "Invalid option: -"$OPTARG"" >&2
+            exit 1;;
+        : ) echo "Option -"$OPTARG" requires an argument." >&2
+            exit 1;;
+        --) shift ; break ;;
+        *) echo "
+					Internal error!" ; exit 1 ;;
+    esac
+done
+shift "$(($OPTIND - 1))"
+
+
+#Let's add some color support for a more understandable output.
+red=`tput setaf 1`
+green=`tput setaf 2`
+yellow=`tput setaf 3`
+blue=`tput setaf 6`
+reset=`tput sgr0`
+
+echo -e "${yellow}List is set to ${red}$list$reset";
+echo -e "${yellow}Using file ${red}$subnet$yellow for subnets$reset"
+echo -e "${yellow}Using ${red}$mailtemplate$reset$yellow as Mail Template$reset"
+echo -e "${yellow}Mails sent will be displayed as from ${red}$smtp_sender_name$reset"
+echo -e "${yellow}In case there are blacklisted IP addresses, they will be reported to ${red}$EMAIL${reset}"
+echo
+echo
 
 #DNS server (some times own DNS server can check queryes slower so you want to enter an dns server manualy) leave it empty if you want to use your own dns server
-dnsserver=
-
+dnsserver=208.67.222.222
 
 #sleep between subnets
-ssub=2s
+ssub=0s
 #sleep between each ip is checked
-sip=0.1s
+sip=0.00s
 #sleep between each blacklist check
-sblck=0.001s
-#Email to witch one it will send blacklisted ip
-EMAIL="info@email.com"
-#Send email after each subnet check 1 = yes; 0 =  email will be send instantly after blaclist found
+sblck=0.000s
+#Send email after each subnet check 1 = yes; 0 =  email will be send instantly after blacklist found
 semail=1
 
 #prompter, if 1 then in email will be included removal link from file prompter
 prompter=1
-prompter_phone=111111
-prompter_email=$EMAIL #you can enter any other email if you want
+prompter_phone=+905554443322
+#prompter_email=$EMAIL #you can enter any other email if you want
+prompter_email=abuse@domain.net
 
-
-use_smtp="0" # requires package mailx if 1 then emails will be sent via smtp if 0 via mail server
-smtp_srv="smt.server.com"
+use_smtp="1" # requires package mailx if 1 then emails will be sent via smtp if 0 via mail server
+smtp_srv="sftp.google.org"
 smtp_port="25"
-smtp_user="smtp_user@server.com"
-smtp_password="smtp_password"
-smtp_from="from@server.com"
-smtp_sender_name="Your company"
-smtp_ssl_args="-S smtp-use-starttls -S nss-config-dir=/etc/pki/nssdb/ -S ssl-verify=ignore"
+smtp_user="abuse@domain.net"
+smtp_password="strongpassword"
+smtp_from="abuse@domain.net"
+#smtp_sender_name="Chronos IPShield - Second Layer"
+smtp_ssl_args="-S smtp-use-starttls -S ssl-verify=ignore -S nss-config-dir=/root/blacklist-checker/nssdb/"
 
 #This is only example how you can modify this script to send information about blacklisted ips directly to your clients
 #you must modyfi DATABASE queryes to get correct information about client if you want to use it
@@ -45,21 +166,23 @@ smtp_ssl_args="-S smtp-use-starttls -S nss-config-dir=/etc/pki/nssdb/ -S ssl-ver
 user_notify=0
 user_notify_test=1 #if 1 = enabled if enabled then it will send email to your specified email address
 user_notify_test_email=$EMAIL #you can setup test email
-database_ip="1.1.1.1"
+database_ip="localhost"
 database_login="root"
-database_password="secret"
-database_name="an_database"
+database_password="password"
+database_name="blacklistchecker"
 
 
 #for crontabs we need to know where script is placed
 workdir="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 
+# TODO, add this as a disclaimer or footer
+#disclaimer < $workdir/disclaimer.tpl
 
 if [ "$semail" = 1  ]; then
 	declare -a mailarr
 fi
 
-while read i;
+while read -r i;
 do
 	i1=`echo $i | awk '{print $1}'`
 	i2=`echo $i | awk '{print $2}'`
@@ -67,32 +190,32 @@ do
 	while [[ $i2 -le $i3 ]]
 	do
 		ip=`echo $i1.$i2 |awk -F"." '{for(i=NF;i>0;i--) printf i!=1?$i".":"%s",$i}'`
-		for l in $(cat $workdir/list | grep -v "#")
+		for l in $(cat $list | sed -e '/^[[:space:]]*$/d' -e '/^[[:space:]]*#/d')
 		do
 			if [ -z "$dnsserver"  ]; then
 				res=`dig +short $ip.$l | grep -Eo '[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}' | grep 127.0.*`
 			else
-				res=`dig +short @$dnsserver $ip.$l | grep -Eo '[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}' | grep 127.0.*`
+				res=`dig +short @$dnsserver $ip.$l | sed '/^[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}/!  s/^//g' | sed -n '/^127.0/p'`
 			fi
 			if [ ! -z "$res"  ]; then
 				if [ "$prompter" = 1  ]; then
 					rez_prompter=`cat $workdir/prompter | grep -v "#" | grep $l | awk '{print $2}' |  sed "s/{{ip}}/$i1.$i2/g" | sed "s/{{phone}}/$prompter_phone/g" | sed "s/{{email}}/$prompter_email/g"`
 					if [ ! -z "$rez_prompter"  ]; then
-						EMAILMESSAGE=`echo "ip $i1.$i2 blacklisted on $l list - gotten result $res\n$rez_prompter\n\n"`
+						EMAILMESSAGE=`echo "$i1.$i2 - IP address is blacklisted on $l list. Response from the server was: $res\n$rez_prompter\n\n"`
 					else
-						EMAILMESSAGE=`echo "ip $i1.$i2 blacklisted on $l list - gotten result $res\n\n"`
+						EMAILMESSAGE=`echo "$i1.$i2 - IP address is blacklisted on $l list - Response from the server was: $res\n\n"`
 					fi
 				else
-					EMAILMESSAGE=`echo "ip $i1.$i2 blacklisted on $l list - gotten result $res\n"`
+					EMAILMESSAGE=`echo "$i1.$i2 - IP address is blacklisted on $l list - Response from the server was: $res\n"`
 				fi
 				if [ ! -z "$EMAIL"  ]; then #do not send email if dont want it
 					if [ "$semail" = 0  ]; then
 						if [ "$use_smtp" = 1  ]; then
-							echo -e $EMAILMESSAGE | mailx -s "BLACKLISTED ips $i1" $smtp_ssl_args -S smtp=smtp://$smtp_srv:$smtp_port -S smtp-auth=login -S smtp-auth-user=$smtp_user -S smtp-auth-password=$smtp_password -S from="$smtp_sender_name <$smtp_from>" $EMAIL
+							echo -e $EMAILMESSAGE | mailx -s "$i1.0/24 has BLACKLISTED IP addresses" $smtp_ssl_args -S smtp=smtp://$smtp_srv:$smtp_port -S smtp-auth=login -S smtp-auth-user=$smtp_user -S smtp-auth-password=$smtp_password -S from="$smtp_sender_name <$smtp_from>" $EMAIL
 						else
-							echo -e $EMAILMESSAGE | mail -s "BLACKLISTED ips $i1" "$EMAIL"
-						fi   
-					else
+							echo -e $EMAILMESSAGE | mail -s "$i1.0/24 has BLACKLISTED IP addresses" "$EMAIL"
+						fi
+					else # Asagida mail arraye bulunan degerler ekleniyor.
 						mailarr+=($EMAILMESSAGE)
 					fi
 				fi
@@ -122,9 +245,9 @@ do
 							if [ "$user_language" = en  ]; then
 								user_subject="Your server ip address is blacklisted"
 								USER_EMAILMESSAGE="Hello $user_f_name $user_l_name,\n\nWe have detected that one of yours server ip address $i1.$i2 have been blacklisted in $l.\nPlease remove blacklist as soon as it possible - to do it please follow link below\n$user_rez_prompter\n\nThank you.\n\n--\n\nRegards,\nYOUR_ORGANIZATION Administration"
-							elif [ "$user_language" = lt  ]; then
-								user_subject="Jūsų serverio ip adresas yra blacklistintas"
-								USER_EMAILMESSAGE="Sveiki $user_f_name $user_l_name,\n\nAptikome, kad vienas iš jūsų serverio ip adresų $i1.$i2 yra blokuojamas $l blackliste.\nPrašome pašalinti blacklistą kaip įmanoma greičiau - informacija kaip tai padaryti rasite nuorodoje žemiau\n$user_rez_prompter\n\nDėkojame.\n\n--\n\nPagarbiai,\nYOUR_ORGANIZATION Administracija"
+							elif [ "$user_language" = tr  ]; then
+								user_subject="IP Adresiniz karalisteye girmiş"
+								USER_EMAILMESSAGE="Merhaba $user_f_name $user_l_name,\n\nSistemlerimiz tarafınızdan kullanılan $i1.$i2 ip adresinin $l adresinde blackliste girdiğini tespit etti.\nLütfen listeden çıkmak için aşağıdaki adresi ziyaret ederek gereken adımları atınız. Aksi taktirde yaptırımlar olacaktır. Bilgilerinize sunulur.\n\nSaygılarımızla,\n\n--\n\nChronos"
 							else
 								user_subject="Your server ip address is blacklisted"
 								USER_EMAILMESSAGE="Hello $user_f_name $user_l_name,\n\nWe have detected that one of yurs server ip address $i1.$i2 have been blacklisted in $l.\nPlease remove blacklist as soon as it possible - to do it please follow link below\n$user_rez_prompter\n\nThank you.\n\n--\n\nRegards,\nYOUR_ORGANIZATION Administration"
@@ -133,22 +256,22 @@ do
 							#we wont send notifications until we have tested it
 							if [ "$user_notify_test" = 1  ]; then
 								if [ "$use_smtp" = 1  ]; then
-									echo -e "$user_email $USER_EMAILMESSAGE" | mailx -s "$user_subject" $smtp_ssl_args -S smtp=smtp://$smtp_srv:$smtp_port -S smtp-auth=login -S smtp-auth-user=$smtp_user -S smtp-auth-password=$smtp_password -S from="smtp_sender_name <$smtp_from>" $user_notify_test_email
+									echo -e "$user_email $USER_EMAILMESSAGE" | mailx -s "$user_subject" $smtp_ssl_args -S smtp=smtp://$smtp_srv:$smtp_port -S smtp-auth=login -S smtp-auth-user=$smtp_user -S smtp-auth-password=$smtp_password -S from="$smtp_sender_name <$smtp_from>" $user_notify_test_email
 								else
 									echo -e "$user_email $USER_EMAILMESSAGE" | mail -s "$user_subject" $user_notify_test_email
-								fi		
+								fi
 							else
 								if [ "$use_smtp" = 1  ]; then
 									echo -e $USER_EMAILMESSAGE | mailx -s "$user_subject" $smtp_ssl_args -S smtp=smtp://$smtp_srv:$smtp_port -S smtp-auth=login -S smtp-auth-user=$smtp_user -S smtp-auth-password=$smtp_password -S from="Sender Name <$smtp_from>" $user_email
 								else
 									echo -e $USER_EMAILMESSAGE | mail -s "$user_subject" $user_email
-								fi						
+								fi
 							fi
 						fi
 					#fi
 				fi
 			else
-				echo "ip $i1.$i2 not blacklisted on $l list - gotten result $res"
+				echo "$i1.$i2 - ${green}IP address is clean on list: $l.${reset}"
 			fi
 			sleep $sblck
 		done
@@ -156,16 +279,17 @@ do
 		sleep $sip
 	done
 	if [ "$semail" = 1  ]; then
-		if [ -z "$mailarr" ]; then
-			echo "Array empty"
-		else
+		if [ -z "${mailarr+x}" ]; then
+			echo "${blue}Subnet is clear! There is nothing to report.${reset}"
+		else		#Epostaya dusen kisim asagisi, mail array ozelligi aciksa
 			if [ "$use_smtp" = 1  ]; then
-				echo -e  ${mailarr[*]} | mailx -s "BLACKLISTED ips $i1" $smtp_ssl_args -S smtp=smtp://$smtp_srv:$smtp_port -S smtp-auth=login -S smtp-auth-user=$smtp_user -S smtp-auth-password=$smtp_password -S from="smtp_sender_name <$smtp_from>" $EMAIL
+				mailarrlenght=$(echo -e  ${mailarr[*]+"${mailarr[*]}"} | grep "IP address" | wc -l);
+				echo -e  "${MAPFILE[@]}" ${mailarr[*]+"${mailarr[*]}"} "\n\n\n\n\n\n" | mailx -s "$i1.0/24 has $mailarrlenght BLACKLIST records" $smtp_ssl_args -S smtp=smtp://$smtp_srv:$smtp_port -S smtp-auth=login -S smtp-auth-user=$smtp_user -S smtp-auth-password=$smtp_password -S from="$smtp_sender_name <$smtp_from>" $EMAIL
 			else
-				echo -e  ${mailarr[*]} | mail -s "BLACKLISTED ips $i1" "$EMAIL"
-			fi   
+				echo -e  ${mailarr[*]} | mail -s "$i1.0/24 found BLACKLISTED IP addresses" "$EMAIL"
+			fi
 		fi
 		unset mailarr
 	fi
 sleep $ssub
-done <$workdir/sub
+done <$workdir/$subnet
